@@ -1,0 +1,28 @@
+# Orchestration
+langgraph
+langchain-core
+langchain-ollama
+
+# PDF parsing (layout-aware: tables, figures)
+docling
+
+# Embeddings (local, scientific text)
+sentence-transformers
+
+# Vector store
+chromadb
+
+# Zotero integration
+pyzotero
+
+# External search
+arxiv
+crossrefapi
+
+# Interface
+streamlit
+
+# Utilities
+pydantic
+python-dotenv
+watchdog

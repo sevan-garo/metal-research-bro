@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data (local corpus, vector store, metadata DB)
+data/pdfs/*
+!data/pdfs/.gitkeep
+data/chroma/*
+!data/chroma/.gitkeep
+*.sqlite3
+*.sqlite3-journal
