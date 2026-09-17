@@ -285,11 +285,10 @@ respect.
     through `storage/vector_store.py` and `storage/metadata_db.py`, so this should
     be a rewrite of those two files' internals, not a wider refactor — verify that
     still holds before starting.
-11. **Docker** — deliberately not done. Containerizing Ollama loses Apple Silicon
-    GPU acceleration on this machine, and the app talks to two things that only
-    exist on the host (Ollama, Zotero's local API), so a container would need
-    `host.docker.internal` plumbing for no POC-stage benefit. Revisit once (10) is
-    underway and there's an actual deployment target to reproduce.
+11. **Docker** — deliberately deferred, not forgotten. See docs/adr/0018 for the
+    full reasoning (GPU passthrough, host-only dependencies, nothing to
+    reproduce yet) and the specific triggers that should prompt revisiting it
+    (multi-user migration, a hosted/remote LLM, a second contributor/machine).
 
 **Deliberately out of scope until (10) above**: real web app with authentication,
 per-user data isolation.
