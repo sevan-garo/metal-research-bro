@@ -35,6 +35,22 @@ or misattributed a claim, and the fix is documented rather than silently shipped
 so the "zero unsourced claims" rule stays a property you can verify, not just a
 promise in this README.
 
+### A note on how this was built
+
+This project was built with [Claude Code](https://claude.com/claude-code), and
+that's stated plainly rather than left for someone to guess: using it here was
+itself part of the point. Alongside solving my own research problem, I wanted to
+explore what an AI coding agent can actually carry end to end — not just writing
+functions from a spec, but installing and configuring real local infrastructure
+(Ollama, a Python environment), debugging against live services (a real Zotero
+library, live arXiv/Crossref calls), catching its own failures during testing
+(several ADRs exist because a live run surfaced a bug, not because it was
+anticipated up front), and documenting the reasoning as it went rather than after
+the fact. The [ADR log](docs/adr/) is as much a record of that exploration as it
+is of the technical decisions themselves — including places where the first
+attempt didn't work and the fix, and why, is written down rather than quietly
+rewritten over.
+
 See [CLAUDE.md](CLAUDE.md) for the full architecture, current status, and roadmap;
 [docs/adr/](docs/adr/) for the reasoning behind individual engineering choices
 (why LangGraph, why Docling, why SPECTER over SPECTER2, why pyzotero's local API
