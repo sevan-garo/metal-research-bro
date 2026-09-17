@@ -46,6 +46,7 @@ def search_crossref(query: str, max_results: int | None = None) -> list[Retrieve
                 page=None,
                 source="crossref",
                 score=round(1.0 - rank / max_results, 3),
+                doi=item.get("DOI") or None,
             )
         )
     return chunks

@@ -19,3 +19,7 @@ Each record follows a short Context / Decision / Consequences format.
 | [0008](0008-sqlite-metadata-idempotence.md) | SQLite metadata DB + hash-based idempotence | Accepted |
 | [0009](0009-zotero-local-api-pyzotero.md) | pyzotero against Zotero's local API, not zotero-mcp | Accepted |
 | [0010](0010-external-search-rank-based-score.md) | Rank-based relevance score for arXiv/Crossref | Accepted |
+| [0011](0011-exclude-reference-sections.md) | Exclude reference/bibliography sections from chunking | Accepted |
+| [0012](0012-keyword-extraction-for-literal-search-apis.md) | Keyword extraction for Zotero/arXiv/Crossref | Accepted |
+| [0013](0013-citation-enforcement-is-provenance-not-faithfulness.md) | Sentence-level citation enforcement (provenance, not faithfulness) | Accepted, known gap |
+| [0014](0014-cap-merged-results.md) | Cap dedupe_merge output to top 10 | Accepted |

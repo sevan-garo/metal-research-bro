@@ -25,6 +25,7 @@ def search_arxiv(query: str, max_results: int | None = None) -> list[RetrievedCh
             page=None,
             source="arxiv",
             score=round(1.0 - rank / max(len(results), 1), 3),
+            doi=result.doi,
         )
         for rank, result in enumerate(results)
     ]

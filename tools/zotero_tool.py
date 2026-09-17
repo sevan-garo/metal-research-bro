@@ -52,6 +52,7 @@ def _item_to_chunk(item: dict) -> RetrievedChunk:
         page=None,
         source="zotero",
         score=1.0,
+        doi=data.get("DOI") or None,
     )
 
 

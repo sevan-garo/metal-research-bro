@@ -26,6 +26,7 @@ def search_local_rag(query: str, top_k: int = 5) -> list[RetrievedChunk]:
             page=metadata["page"] or None,
             source="local",
             score=1.0 - distance,
+            doi=None,
         )
         for text, metadata, distance in zip(documents, metadatas, distances)
     ]
