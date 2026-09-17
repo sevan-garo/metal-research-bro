@@ -21,14 +21,28 @@ st.caption(
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+
+def render_message(content: str, citations: list[dict], diagnostics: str) -> None:
+    st.markdown(content)
+    if citations:
+        with st.expander(f"Sources ({len(citations)})"):
+            for citation in citations:
+                location = f"p.{citation['page']}" if citation["page"] else (citation["section"] or "")
+                st.markdown(f"- **{citation['title']}** — {location}")
+    # Always shown, even with zero citations: a source that was queried and
+    # legitimately found nothing must stay visibly distinct from one that
+    # errored out (e.g. Zotero not running) — see docs/adr/0016.
+    if diagnostics:
+        with st.expander("Search diagnostics", expanded=not citations):
+            st.code(diagnostics, language=None)
+
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if message["role"] == "assistant" and message.get("citations"):
-            with st.expander(f"Sources ({len(message['citations'])})"):
-                for citation in message["citations"]:
-                    location = f"p.{citation['page']}" if citation["page"] else (citation["section"] or "")
-                    st.markdown(f"- **{citation['title']}** — {location}")
+        if message["role"] == "assistant":
+            render_message(message["content"], message.get("citations", []), message.get("diagnostics", ""))
+        else:
+            st.markdown(message["content"])
 
 if question := st.chat_input("Ask a metallurgy research question..."):
     st.session_state.messages.append({"role": "user", "content": question})
@@ -38,13 +52,13 @@ if question := st.chat_input("Ask a metallurgy research question..."):
     with st.chat_message("assistant"):
         with st.spinner("Searching local corpus, Zotero, and arXiv/Crossref..."):
             result = run_agent(question)
-        st.markdown(result["answer"])
-        if result["citations"]:
-            with st.expander(f"Sources ({len(result['citations'])})"):
-                for citation in result["citations"]:
-                    location = f"p.{citation['page']}" if citation["page"] else (citation["section"] or "")
-                    st.markdown(f"- **{citation['title']}** — {location}")
+        render_message(result["answer"], result["citations"], result["search_diagnostics"])
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": result["answer"], "citations": result["citations"]}
+        {
+            "role": "assistant",
+            "content": result["answer"],
+            "citations": result["citations"],
+            "diagnostics": result["search_diagnostics"],
+        }
     )

@@ -2,6 +2,7 @@
 
 from langgraph.graph import END, StateGraph
 
+import config
 from agent.nodes import (
     dedupe_merge_node,
     generate_answer_node,
@@ -10,7 +11,9 @@ from agent.nodes import (
     retrieve_zotero_node,
     router_node,
 )
-from agent.state import AgentState
+from agent.state import AgentState, SourceStatus
+
+config.configure_logging()
 
 RETRIEVAL_NODES = ["retrieve_local", "retrieve_zotero", "retrieve_external"]
 
@@ -39,6 +42,10 @@ def build_graph():
     return graph.compile()
 
 
+def _unqueried_status() -> SourceStatus:
+    return SourceStatus(queried=False, count=0, error=None)
+
+
 def run_agent(question: str) -> AgentState:
     app = build_graph()
     initial_state: AgentState = {
@@ -49,7 +56,11 @@ def run_agent(question: str) -> AgentState:
         "local_results": [],
         "zotero_results": [],
         "external_results": [],
+        "local_status": _unqueried_status(),
+        "zotero_status": _unqueried_status(),
+        "external_status": _unqueried_status(),
         "merged_results": [],
+        "search_diagnostics": "",
         "answer": "",
         "citations": [],
     }
@@ -61,7 +72,8 @@ if __name__ == "__main__":
 
     user_question = " ".join(sys.argv[1:]) or "What does my corpus say about quenching and partitioning of AHSS steels?"
     result = run_agent(user_question)
-    print("ANSWER:\n", result["answer"])
+    print("SEARCH DIAGNOSTICS:\n", result["search_diagnostics"])
+    print("\nANSWER:\n", result["answer"])
     print("\nCITATIONS:")
     for citation in result["citations"]:
         print(" -", citation)

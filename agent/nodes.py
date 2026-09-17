@@ -1,15 +1,18 @@
 """Graph nodes: router, retrieve_*, dedupe_merge, generate_answer."""
 
+import logging
 import re
 
 from pydantic import BaseModel, Field
 
 from agent.llm import get_llm
-from agent.state import AgentState, Citation, RetrievedChunk
+from agent.state import AgentState, Citation, RetrievedChunk, SourceStatus
 from tools.arxiv_tool import search_arxiv
 from tools.crossref_tool import search_crossref
 from tools.local_rag import search_local_rag
 from tools.zotero_tool import search_zotero
+
+logger = logging.getLogger(__name__)
 
 # --- router ---------------------------------------------------------------
 
@@ -43,8 +46,18 @@ class RoutingDecision(BaseModel):
 
 
 def router_node(state: AgentState) -> dict:
-    structured_llm = get_llm().with_structured_output(RoutingDecision)
-    decision = structured_llm.invoke(ROUTER_PROMPT.format(question=state["question"]))
+    try:
+        structured_llm = get_llm().with_structured_output(RoutingDecision)
+        decision = structured_llm.invoke(ROUTER_PROMPT.format(question=state["question"]))
+    except Exception:
+        # If the LLM itself is unreachable (e.g. Ollama isn't running), that's
+        # a hard failure worth logging loudly — unlike an empty search result,
+        # this means the agent can't reason at all, not just "found nothing".
+        logger.exception("router_node: LLM call failed, defaulting to querying every source")
+        return {
+            "sources_to_query": ["retrieve_local", "retrieve_zotero", "retrieve_external"],
+            "keyword_query": state["question"],
+        }
 
     sources = []
     if decision.query_local:
@@ -57,6 +70,7 @@ def router_node(state: AgentState) -> dict:
         # Never answer from nothing: if the router can't decide, query everything.
         sources = ["retrieve_local", "retrieve_zotero", "retrieve_external"]
 
+    logger.info("router_node: sources=%s keyword_query=%r", sources, decision.keyword_query)
     return {"sources_to_query": sources, "keyword_query": decision.keyword_query}
 
 
@@ -64,18 +78,54 @@ def router_node(state: AgentState) -> dict:
 
 
 def retrieve_local_node(state: AgentState) -> dict:
-    # Embedding search handles full natural-language questions well (unlike
-    # the keyword-matching APIs below) — see docs/adr/0011.
-    return {"local_results": search_local_rag(state["question"], top_k=5)}
+    try:
+        # Embedding search handles full natural-language questions well
+        # (unlike the keyword-matching APIs below) — see docs/adr/0011.
+        results = search_local_rag(state["question"], top_k=5)
+        logger.info("retrieve_local: %d result(s)", len(results))
+        status = SourceStatus(queried=True, count=len(results), error=None)
+    except Exception as exc:
+        logger.exception("retrieve_local: search_local_rag failed")
+        results, status = [], SourceStatus(queried=True, count=0, error=str(exc))
+    return {"local_results": results, "local_status": status}
 
 
 def retrieve_zotero_node(state: AgentState) -> dict:
-    return {"zotero_results": search_zotero(state["keyword_query"])}
+    try:
+        results = search_zotero(state["keyword_query"])
+        logger.info("retrieve_zotero: %d result(s) for %r", len(results), state["keyword_query"])
+        status = SourceStatus(queried=True, count=len(results), error=None)
+    except Exception as exc:
+        # e.g. Zotero desktop app not running, or its local API disabled
+        # (docs/adr/0009) — a connection failure, not "no results".
+        logger.exception("retrieve_zotero: search_zotero failed")
+        results, status = [], SourceStatus(queried=True, count=0, error=str(exc))
+    return {"zotero_results": results, "zotero_status": status}
 
 
 def retrieve_external_node(state: AgentState) -> dict:
     keywords = state["keyword_query"]
-    return {"external_results": search_arxiv(keywords) + search_crossref(keywords)}
+    results: list[RetrievedChunk] = []
+    errors: list[str] = []
+
+    try:
+        arxiv_results = search_arxiv(keywords)
+        results.extend(arxiv_results)
+        logger.info("retrieve_external: search_arxiv %d result(s) for %r", len(arxiv_results), keywords)
+    except Exception as exc:
+        logger.exception("retrieve_external: search_arxiv failed")
+        errors.append(f"arxiv: {exc}")
+
+    try:
+        crossref_results = search_crossref(keywords)
+        results.extend(crossref_results)
+        logger.info("retrieve_external: search_crossref %d result(s) for %r", len(crossref_results), keywords)
+    except Exception as exc:
+        logger.exception("retrieve_external: search_crossref failed")
+        errors.append(f"crossref: {exc}")
+
+    status = SourceStatus(queried=True, count=len(results), error="; ".join(errors) or None)
+    return {"external_results": results, "external_status": status}
 
 
 # --- dedupe_merge -----------------------------------------------------------
@@ -94,6 +144,25 @@ MAX_MERGED_RESULTS = 10
 
 def _normalize_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", title.lower())
+
+
+def _summarize_source_status(state: AgentState) -> str:
+    """Render each source's outcome so "found nothing" and "search failed" are
+    never ambiguous to whoever reads the answer — see docs/adr/0016."""
+    lines = []
+    for label, key in (
+        ("Local corpus", "local_status"),
+        ("Zotero", "zotero_status"),
+        ("arXiv/Crossref", "external_status"),
+    ):
+        status: SourceStatus = state[key]
+        if not status["queried"]:
+            lines.append(f"- {label}: not queried")
+        elif status["error"]:
+            lines.append(f"- {label}: ERROR — {status['error']}")
+        else:
+            lines.append(f"- {label}: {status['count']} result(s)")
+    return "\n".join(lines)
 
 
 def dedupe_merge_node(state: AgentState) -> dict:
@@ -117,7 +186,9 @@ def dedupe_merge_node(state: AgentState) -> dict:
         seen_titles.add(title_key)
         merged.append(chunk)
 
-    return {"merged_results": merged}
+    diagnostics = _summarize_source_status(state)
+    logger.info("dedupe_merge: %d merged result(s) from %d raw\n%s", len(merged), len(all_results), diagnostics)
+    return {"merged_results": merged, "search_diagnostics": diagnostics}
 
 
 # --- generate_answer ---------------------------------------------------------
@@ -147,11 +218,6 @@ Question: {question}
 Answer:"""
 
 _CITATION_PATTERN = re.compile(r"\[([^\[\]]+)\]")
-_NO_SOURCES_ANSWER = (
-    "I couldn't find any sourced material — in your local corpus, Zotero library, "
-    "or arXiv/Crossref — to answer this question. Try rephrasing, or check that the "
-    "relevant papers are ingested."
-)
 
 
 def _format_sources_block(results: list[RetrievedChunk]) -> str:
@@ -236,11 +302,23 @@ def _enforce_citations(raw_answer: str, results: list[RetrievedChunk]) -> tuple[
 
 def generate_answer_node(state: AgentState) -> dict:
     merged = state["merged_results"]
+    diagnostics = state["search_diagnostics"]
+
     if not merged:
-        return {"answer": _NO_SOURCES_ANSWER, "citations": []}
+        # Distinguish "every queried source legitimately found nothing" from
+        # "a source errored out" in the answer itself, not just the logs —
+        # a researcher relying on this for real work needs to know whether
+        # to trust the silence or go check why Zotero/Ollama isn't reachable.
+        logger.info("generate_answer: no merged results\n%s", diagnostics)
+        answer = (
+            "I couldn't find any sourced material to answer this question. "
+            f"Search results by source:\n{diagnostics}"
+        )
+        return {"answer": answer, "citations": []}
 
     prompt = GENERATE_PROMPT.format(sources_block=_format_sources_block(merged), question=state["question"])
     raw_answer = get_llm().invoke(prompt).content
 
     answer, citations = _enforce_citations(raw_answer, merged)
+    logger.info("generate_answer: %d citation(s) in final answer", len(citations))
     return {"answer": answer, "citations": citations}
