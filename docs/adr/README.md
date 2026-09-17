@@ -18,3 +18,4 @@ Each record follows a short Context / Decision / Consequences format.
 | [0007](0007-chroma-vector-store.md) | Chroma as the embedded vector store | Accepted |
 | [0008](0008-sqlite-metadata-idempotence.md) | SQLite metadata DB + hash-based idempotence | Accepted |
 | [0009](0009-zotero-local-api-pyzotero.md) | pyzotero against Zotero's local API, not zotero-mcp | Accepted |
+| [0010](0010-external-search-rank-based-score.md) | Rank-based relevance score for arXiv/Crossref | Accepted |
