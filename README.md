@@ -5,7 +5,10 @@ a local paper corpus (RAG), a Zotero library (via MCP), and arXiv/Crossref searc
 with mandatory sourced citations. 100% free/open-source stack, runs fully local via
 Ollama.
 
-See [CLAUDE.md](CLAUDE.md) for the full architecture and project instructions.
+See [CLAUDE.md](CLAUDE.md) for the full architecture and project instructions, and
+[docs/adr/](docs/adr/) for the reasoning behind individual engineering choices
+(why LangGraph, why Docling, why SPECTER over SPECTER2, etc.), written as each
+piece was built.
 
 ## Setup
 
