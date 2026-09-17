@@ -17,3 +17,4 @@ Each record follows a short Context / Decision / Consequences format.
 | [0006](0006-chunking-by-section.md) | Semantic chunking by section, not fixed length | Accepted |
 | [0007](0007-chroma-vector-store.md) | Chroma as the embedded vector store | Accepted |
 | [0008](0008-sqlite-metadata-idempotence.md) | SQLite metadata DB + hash-based idempotence | Accepted |
+| [0009](0009-zotero-local-api-pyzotero.md) | pyzotero against Zotero's local API, not zotero-mcp | Accepted |
