@@ -23,3 +23,4 @@ Each record follows a short Context / Decision / Consequences format.
 | [0012](0012-keyword-extraction-for-literal-search-apis.md) | Keyword extraction for Zotero/arXiv/Crossref | Accepted |
 | [0013](0013-citation-enforcement-is-provenance-not-faithfulness.md) | Sentence-level citation enforcement (provenance, not faithfulness) | Accepted, known gap |
 | [0014](0014-cap-merged-results.md) | Cap dedupe_merge output to top 10 | Accepted |
+| [0015](0015-streamlit-interface.md) | Streamlit chat interface, sys.path fix | Accepted |
