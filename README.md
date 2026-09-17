@@ -5,10 +5,11 @@ a local paper corpus (RAG), a Zotero library, and arXiv/Crossref search, with
 mandatory sourced citations. 100% free/open-source stack, runs fully local via
 Ollama — no paper content or question ever leaves the machine.
 
-See [CLAUDE.md](CLAUDE.md) for the full architecture and project instructions, and
+See [CLAUDE.md](CLAUDE.md) for the full architecture, current status, and roadmap;
 [docs/adr/](docs/adr/) for the reasoning behind individual engineering choices
 (why LangGraph, why Docling, why SPECTER over SPECTER2, why pyzotero's local API
-over an MCP server, etc.), written as each piece was built and tested.
+over an MCP server, etc.), written as each piece was built and tested; and
+[docs/TESTING.md](docs/TESTING.md) for how to verify any of it still works.
 
 ## Setup
 
@@ -40,6 +41,17 @@ streamlit run interface/app.py
 # Or query the agent directly from the CLI
 python -m agent.graph "your question here"
 ```
+
+## Test
+
+```bash
+python -m pytest tests/ -v   # pure logic: chunking, dedup, citation enforcement
+ruff check .
+```
+
+See [docs/TESTING.md](docs/TESTING.md) for manual/live testing (everything that
+depends on Ollama, Zotero, or the external APIs — most of what the app actually
+does — can't be meaningfully unit-tested; see docs/adr/0017).
 
 ## Project structure
 

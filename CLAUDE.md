@@ -6,8 +6,21 @@ An AI companion for PhD students and researchers in metallurgy, answering resear
 questions by drawing on three complementary sources:
 
 1. A local corpus (RAG) of papers already purchased or co-authored by the researcher
-2. Their Zotero library (via an MCP server)
+2. Their Zotero library (via pyzotero against Zotero desktop's local API — see
+   docs/adr/0009; not an MCP server, despite the name in early planning notes below)
 3. arXiv / Crossref to expand beyond their personal library
+
+**If you are a Claude session picking this project up**: read
+[docs/adr/README.md](docs/adr/README.md) before changing anything — it's the log of
+what was tried, what broke, and why the current approach was chosen instead of an
+apparently-simpler one. The "Decisions already made" and stack table below are the
+*original* planning notes from before implementation started; where they conflict
+with an ADR, the ADR reflects what's actually built and is authoritative. Then read
+[Current Status](#current-status) and [Next Steps (V2)](#next-steps-v2) further down
+for what's done and what's next, and [docs/TESTING.md](docs/TESTING.md) before
+claiming anything works — most of this project's real behavior depends on a
+running Ollama/Zotero and can't be verified by reading the code alone
+(docs/adr/0017).
 
 **Current stage**: POC, single-user, no authentication or legal constraints. The
 architecture must stay modular so it doesn't need a rewrite when moving to production
@@ -35,9 +48,11 @@ sync with Zotero to spot new items; layout-aware parsing (tables, figures); sema
 chunking by article section; embeddings; writing to the vector store + metadata DB.
 
 **Layer 2 — Tools (exposed to the agent)**:
-- `search_local_rag`: vector search + reranking over the already-ingested corpus
-- `search_zotero` (MCP): search by metadata/tags/collections, fetches the PDF if the
-  item isn't indexed yet (triggers on-the-fly ingestion)
+- `search_local_rag`: vector search over the already-ingested corpus (no reranking
+  yet — see Next Steps)
+- `search_zotero`: pyzotero against Zotero desktop's local API (docs/adr/0009),
+  search by metadata/tags/collections. On-the-fly ingestion when a matched item
+  isn't indexed yet, and `add_to_zotero`, are not built — see Next Steps.
 - `search_arxiv` / `search_crossref`: expands beyond the personal library
 
 **Layer 3 — Orchestration (LangGraph agent)**: a state graph that routes the question
@@ -59,10 +74,10 @@ Streamlit → web app) without touching the others.
 | Orchestration | LangGraph | Explicit state graph, native checkpointing, multi-tool support |
 | LLM | Ollama (Llama 3.1 / Qwen2.5) | Free, 100% local, no research data ever leaves the machine |
 | PDF parsing | Docling | Layout-aware: preserves table structure, spots figures |
-| Embeddings | SPECTER2 or sentence-transformers (local) | Free, local, trained on scientific text |
+| Embeddings | `sentence-transformers/allenai-specter` (local) | Free, local, scientific-text-trained; SPECTER not SPECTER2 — see docs/adr/0005 |
 | Vector store | Chroma (local, embedded) | Zero setup for POC, easy migration to Qdrant/pgvector |
 | Metadata DB | SQLite | Sufficient for single-user, migration to Postgres in production |
-| Zotero | zotero-mcp, pyzotero fallback | Explicitly requested |
+| Zotero | pyzotero against the local API | Explicitly requested; local API over Web API or an MCP server — see docs/adr/0009 |
 | External search | arXiv API + Crossref API | Free, stable, no scraping |
 | Interface | Streamlit | Chat + source display, no frontend dev needed |
 
@@ -72,45 +87,65 @@ POC tests.
 
 ## LangGraph agent
 
-**Graph nodes (starting proposal)**:
-1. `router` — analyzes the question, decides which source(s) to query (local /
-   Zotero / arXiv-Crossref), can pick several
-2. `retrieve_local` — calls `search_local_rag`
-3. `retrieve_zotero` — calls `search_zotero`
-4. `retrieve_external` — calls `search_arxiv` / `search_crossref`
-5. `dedupe_merge` — merges results from the queried sources, removes duplicates
-   (same DOI/title)
-6. `generate_answer` — generates the answer with mandatory citations, format
-   `[Title, p.X]`
-7. `offer_zotero_add` — if an external result isn't in Zotero, offers to add it
-   (requires user confirmation)
+**Graph nodes** (`agent/nodes.py`, wired in `agent/graph.py`):
+1. `router` — LLM structured-output call: decides which source(s) to query, and
+   extracts a keyword-only query for the literal-match APIs (docs/adr/0012).
+   Falls back to querying every source if the LLM call fails or is undecided.
+2. `retrieve_local` — calls `search_local_rag` with the full natural-language
+   question (embeddings handle it fine, unlike the APIs below)
+3. `retrieve_zotero` — calls `search_zotero` with the extracted keyword query
+4. `retrieve_external` — calls `search_arxiv` + `search_crossref` with the
+   keyword query
+5. `dedupe_merge` — merges results from the queried sources, dedupes by DOI/title,
+   caps to top 10 (docs/adr/0014), builds the `search_diagnostics` summary
+   (docs/adr/0016)
+6. `generate_answer` — generates the answer, then enforces citations at the
+   *sentence* level: any sentence whose bracket doesn't match a retrieved
+   source's title is dropped (docs/adr/0013)
+7. `offer_zotero_add` — **not built**. See Next Steps.
 
-**Tool signatures**:
+Each `retrieve_*` node wraps its tool call(s) in try/except and reports a
+`SourceStatus` (queried/count/error) rather than a bare list, so "found nothing"
+and "the source errored out" are never conflated — see docs/adr/0016. This
+pattern should be followed for any new tool/node added later.
+
+**Tool signatures** (actual, not the original proposal — `Chunk`/`Paper`/
+`ZoteroItem` below are all the one `RetrievedChunk` TypedDict in
+`agent/state.py`, not separate per-source types):
 ```python
-search_local_rag(query: str, top_k: int) -> list[Chunk]
-search_zotero(query: str, filters: dict | None) -> list[ZoteroItem]
-search_arxiv(query: str, max_results: int) -> list[Paper]
-search_crossref(query: str, max_results: int) -> list[Paper]
-add_to_zotero(item: Paper, tags: list[str]) -> ZoteroItem  # requires confirmation
+search_local_rag(query: str, top_k: int = 5) -> list[RetrievedChunk]
+search_zotero(query: str, filters: dict | None = None) -> list[RetrievedChunk]
+search_arxiv(query: str, max_results: int | None = None) -> list[RetrievedChunk]
+search_crossref(query: str, max_results: int | None = None) -> list[RetrievedChunk]
+add_to_zotero(item: Paper, tags: list[str]) -> ZoteroItem  # not built — see Next Steps
 ```
 
-**Graph state**: question, conversation history, raw results per source,
-deduplicated results, answer being generated, list of citations used.
+**Graph state** (`agent/state.py`, `AgentState`): question, history,
+`sources_to_query`, `keyword_query`, per-source results and `SourceStatus`,
+`merged_results`, `search_diagnostics`, `answer`, `citations`.
 
-LangGraph checkpointing is used from the POC stage to replay/debug multi-step
-reasoning, and is directly reusable in production for session persistence.
+LangGraph checkpointing (native to the framework) is not yet wired up for this
+graph — `run_agent` compiles and invokes a fresh graph per call, with no
+persisted checkpointer. Worth adding once conversation history/multi-turn
+context actually matters (see Next Steps); until then there's nothing to
+checkpoint across, since `history` in `AgentState` is populated but not yet
+read by any node.
 
 ## Ingestion pipeline
 
-1. **Discovery**: scan the local PDF folder (watcher or manual trigger for the POC)
-   + call Zotero MCP to list library items not yet ingested
+1. **Discovery**: scan the local PDF folder by file hash (`ingestion/discover.py`,
+   manual trigger via `python -m ingestion.pipeline` — no watcher yet, see Next
+   Steps). Listing not-yet-ingested Zotero items is not built; only plain-folder
+   PDFs are ingested today.
 2. **Parsing**: extract text via Docling while preserving structure (headings,
    tables, figure captions); figures are extracted as images but not analyzed in the
    POC (V2: multimodal vision)
 3. **Metadata enrichment**: prefer Zotero metadata (DOI, authors, year, journal) when
    the item comes from Zotero, rather than re-parsing it from the PDF
 4. **Chunking**: split by logical scientific article section (abstract / methods /
-   results / discussion), not by fixed character length
+   results / discussion), not by fixed character length. Reference/bibliography/
+   acknowledgment sections are excluded entirely — they lexically dominate keyword
+   queries without containing any citable claim (docs/adr/0011).
 5. **Embedding**: generate vectors per chunk
 6. **Writing**: chunks + vectors → Chroma; metadata → SQLite
 7. **Idempotence**: an item already ingested (same DOI/file hash) is not re-ingested
@@ -137,47 +172,127 @@ comparison.
 ```
 metal-research-bro/
 ├── ingestion/
-│   ├── discover.py        # scan local folder + list Zotero items
-│   ├── parse.py           # Docling: text, tables, figures
-│   ├── chunk.py           # semantic chunking by section
-│   ├── embed.py           # embedding generation
-│   └── pipeline.py        # ingestion run orchestration
+│   ├── discover.py        # scan local folder by file hash (idempotence)
+│   ├── parse.py           # Docling: text/tables/figures, tagged by section+page
+│   ├── chunk.py           # semantic chunking by section, excludes references
+│   ├── embed.py           # SPECTER embedding generation
+│   └── pipeline.py        # ingestion run orchestration (entry point: __main__)
 ├── tools/
 │   ├── local_rag.py       # search_local_rag
-│   ├── zotero_tool.py     # search_zotero, add_to_zotero (via MCP)
+│   ├── zotero_tool.py     # search_zotero (no add_to_zotero yet)
 │   ├── arxiv_tool.py      # search_arxiv
 │   └── crossref_tool.py   # search_crossref
 ├── agent/
-│   ├── graph.py           # LangGraph graph definition
+│   ├── graph.py           # LangGraph graph definition (entry point: __main__)
 │   ├── nodes.py           # router, retrieve_*, dedupe_merge, generate_answer
-│   └── state.py           # graph state schema
+│   ├── state.py           # graph state schema (AgentState, RetrievedChunk, SourceStatus)
+│   └── llm.py             # shared Ollama ChatOllama client
 ├── storage/
 │   ├── vector_store.py    # Chroma wrapper
 │   └── metadata_db.py     # SQLite wrapper
 ├── interface/
-│   └── app.py             # Streamlit
+│   └── app.py             # Streamlit chat app (entry point)
+├── docs/
+│   ├── adr/                # Architecture Decision Records — read before changing anything
+│   └── TESTING.md          # automated + manual/live testing guide
+├── tests/                  # pytest: pure logic only (chunking, dedup, citations) — see docs/adr/0017
 ├── data/
 │   ├── pdfs/               # local PDF corpus (gitignored)
-│   └── chroma/             # Chroma persistence directory (gitignored)
-├── config.py               # paths, settings
+│   ├── chroma/             # Chroma persistence directory (gitignored)
+│   └── metadata.sqlite3    # SQLite metadata DB (gitignored)
+├── config.py               # paths, settings, logging setup
+├── conftest.py             # empty — puts the project root on pytest's sys.path
 └── requirements.txt
 ```
 
-## POC scope vs production evolutions
+## Current Status
 
-**In POC scope**:
-- Federated Q&A (local + Zotero + arXiv/Crossref) with sourced citations and
-  deduplication
-- Structured summary of a paper (materials studied, method, measured properties)
-- Adding an externally found paper to Zotero, with user confirmation
-- Single-user, no authentication
+Everything below is built, live-tested (not just unit-tested), and on `master`.
+See [docs/adr/README.md](docs/adr/README.md) for the reasoning behind each choice
+and for issues found and fixed during that testing.
 
-**Deliberately out of POC scope, but anticipated in the architecture**:
-- Multi-user → migrating SQLite/Chroma to Postgres/Qdrant, per-user data isolation
-- Real web app with authentication → the interface layer is isolated, replaceable
-- Cross-paper structured extraction (material properties comparison table)
-- Automatic watch (new papers matching the user's topics)
-- Reading figures (phase diagrams, curves) via multimodal vision
+- **Ingestion**: Docling parsing → section-based chunking (references excluded) →
+  SPECTER embeddings → Chroma + SQLite, idempotent by file hash. Tested against a
+  3-paper arXiv metallurgy corpus in `data/pdfs/`.
+- **Tools**: all four (`search_local_rag`, `search_zotero`, `search_arxiv`,
+  `search_crossref`) implemented and tested live — `search_zotero` against a real
+  283-item Zotero library, the others against live APIs.
+- **Agent**: full graph (router → parallel retrieve → dedupe/merge → cited
+  generation) working end-to-end with `qwen2.5:7b`, including per-source error
+  tracing (docs/adr/0016) and sentence-level citation enforcement (docs/adr/0013).
+- **Interface**: Streamlit chat app, screenshot-verified with headless Playwright
+  (docs/adr/0015).
+
+**Known gap, not yet fixed**: citation enforcement checks *provenance* (the cited
+source was actually retrieved), not *faithfulness* (the sentence accurately
+represents that source). A live test showed the model citing real, correctly
+retrieved papers while still summarizing them incorrectly. See docs/adr/0013.
+
+**Not built yet** (present in the original spec below, but out of what's landed):
+`add_to_zotero`, the `offer_zotero_add` graph node, per-paper structured summaries,
+the `material_properties` table, a PDF folder watcher, and any use of
+`AgentState["history"]` for multi-turn context (it's populated by the interface but
+no node reads it yet).
+
+## Next Steps (V2)
+
+Roughly in the order they'd likely get picked up. Each is a real, scoped task, not
+just an idea — start by reading the linked ADR for the constraint it needs to
+respect.
+
+1. **`add_to_zotero` + `offer_zotero_add` node** — the last piece of the original
+   POC scope that isn't built. Needs a write path to Zotero's local API, which is
+   separate from the read path already working (docs/adr/0009 notes Zotero 7 gates
+   local writes behind a `local_api_key` shown in Zotero's own settings — check
+   whether `pyzotero`'s `local=True` mode supports passing it before assuming this
+   is a small change). The graph node itself should reuse the existing
+   confirmation-required pattern implied by the tool signature in this doc.
+2. **Faithfulness checking** (docs/adr/0013's known gap) — citation enforcement
+   currently can't catch a correctly-cited sentence that still misrepresents its
+   source. Needs either an entailment/NLI pass over (sentence, source text) pairs,
+   or a second LLM call asking specifically "does this source support this claim,
+   yes/no" — cheaper to prototype than NLI given the local-LLM-only constraint.
+3. **Per-paper structured summary** — materials studied, method, measured
+   properties, as a distinct agent capability (POC scope, not yet built). Probably
+   a new graph entry point rather than a node in the Q&A graph, since it operates
+   on one already-known document rather than a search query.
+4. **Cross-source relevance re-ranking** (docs/adr/0010, 0014) — arXiv/Crossref
+   rank-based scores aren't calibrated against local RAG's cosine similarity or
+   against each other. Re-embedding all `merged_results` text against the query
+   with the same SPECTER model used for local RAG, then re-scoring, would give one
+   consistent relevance signal instead of three incompatible ones.
+5. **PDF folder watcher** — `ingestion/discover.py` requires a manual
+   `python -m ingestion.pipeline` run today; the original spec called for a
+   watcher. `watchdog` is already in `requirements.txt` but unused.
+6. **Multi-turn context** — `AgentState["history"]` exists and the Streamlit
+   interface populates it across turns, but no node reads it, so every question is
+   answered as if it were the first. Wiring it into the router prompt (and
+   possibly LangGraph's checkpointing for persistence) is what "conversation"
+   actually requires here.
+7. **`material_properties` table + structured extraction** — for cross-paper
+   comparison (alloy composition, heat treatment, mechanical properties). Depends
+   on (3) or can reuse the same extraction step.
+8. **Multimodal figure reading** — phase diagrams, micrographs, stress-strain
+   curves. Docling already extracts figures as images (docs/adr/0004); nothing
+   downstream analyzes them yet. Needs a vision-capable local model (check what
+   Ollama supports beyond `qwen2.5:7b`) or explicit descoping if none performs
+   adequately.
+9. **Terminology normalization** (AFNOR/ASTM/EN alloy designations) — a glossary
+   mapping equivalent designations could improve retrieval matching. Not urgent;
+   only worth it if real queries start missing matches over naming variants.
+10. **Multi-user / production migration** — SQLite → Postgres, Chroma → Qdrant,
+    auth, per-user isolation. Every storage/vector-store access already goes
+    through `storage/vector_store.py` and `storage/metadata_db.py`, so this should
+    be a rewrite of those two files' internals, not a wider refactor — verify that
+    still holds before starting.
+11. **Docker** — deliberately not done. Containerizing Ollama loses Apple Silicon
+    GPU acceleration on this machine, and the app talks to two things that only
+    exist on the host (Ollama, Zotero's local API), so a container would need
+    `host.docker.internal` plumbing for no POC-stage benefit. Revisit once (10) is
+    underway and there's an actual deployment target to reproduce.
+
+**Deliberately out of scope until (10) above**: real web app with authentication,
+per-user data isolation.
 
 ## Metallurgy-specific points of attention
 

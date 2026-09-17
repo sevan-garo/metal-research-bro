@@ -29,4 +29,5 @@ watchdog
 
 # Dev tooling
 ruff
+pytest
 playwright  # UI smoke-testing; run `playwright install chromium` once after installing
