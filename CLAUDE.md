@@ -27,7 +27,14 @@ architecture must stay modular so it doesn't need a rewrite when moving to produ
 (multi-user, real web app).
 
 **Non-negotiable requirement**: every answer must be sourced (paper + precise
-section/page). Zero claims without a verifiable citation.
+section/page). Zero claims without a verifiable citation. This isn't an arbitrary
+quality bar — it's the reason the project exists at all. See the Motivation
+section in [README.md](README.md#motivation): the author is a metallurgy PhD
+researcher who has personally hit the failure mode this rule exists to prevent
+(a hallucinated claim — a fabricated composition, an invented property, a
+misattributed citation — that looks exactly as credible as a correct one). Any
+change that weakens this guarantee, even for convenience or to make a demo look
+more fluent, is working against the project's actual purpose.
 
 ## Decisions already made
 

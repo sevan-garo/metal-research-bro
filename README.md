@@ -5,6 +5,36 @@ a local paper corpus (RAG), a Zotero library, and arXiv/Crossref search, with
 mandatory sourced citations. 100% free/open-source stack, runs fully local via
 Ollama — no paper content or question ever leaves the machine.
 
+## Motivation
+
+I'm a PhD researcher working on AI applied to metallurgy. Over the course of my own
+research I kept hitting the same friction: the literature I actually needed was
+scattered across three places — a folder of papers I'd bought or co-authored, a
+Zotero library, and the wider body of work on arXiv and in journals — with no
+single place to ask a real question and trust the answer. Tools that promise to
+"chat with your papers" are useful right up until the moment they're confidently
+wrong, and in materials science a hallucinated claim — a fabricated alloy
+composition, an invented mechanical property, a citation to a paper that doesn't
+actually say what it's credited with saying — is worse than no answer at all,
+because it looks exactly as credible as a correct one.
+
+So this project is the tool I wished existed: every answer has to point to a real
+retrieved source, section and page, so a claim can be checked in seconds instead of
+trusted blindly — and when the literature it can see doesn't cover the question, it
+has to say so instead of quietly making something up. It searches the three places
+I actually keep my own papers, and it runs entirely locally so none of my
+unpublished questions or purchased papers ever leave my machine.
+
+Beyond solving my own problem, I built it so any student or researcher who's hit
+the same wall — burning time hunting for a source they know exists somewhere in
+their own library, or double-checking whether a plausible-sounding answer is
+actually grounded in a real paper — has something ready to adapt to their own
+corpus. The [ADR log](docs/adr/) is part of that: several entries exist because
+live testing surfaced a specific place the system could have quietly hallucinated
+or misattributed a claim, and the fix is documented rather than silently shipped —
+so the "zero unsourced claims" rule stays a property you can verify, not just a
+promise in this README.
+
 See [CLAUDE.md](CLAUDE.md) for the full architecture, current status, and roadmap;
 [docs/adr/](docs/adr/) for the reasoning behind individual engineering choices
 (why LangGraph, why Docling, why SPECTER over SPECTER2, why pyzotero's local API
